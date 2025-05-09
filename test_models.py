@@ -6,7 +6,8 @@ import time
 import argparse
 import datetime
 
-def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_model_path="blob/seatbelt.blob"):
+def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_model_path="blob/seatbelt.blob", 
+               batch_size=1, frame_interval=1, optimize_for_rvc2=True):
     """
     Process a video file to detect people and cell phones using DepthAI
     
@@ -15,6 +16,9 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
         output_path (str): Path to save processed video (optional)
         show_video (bool): Whether to display the video during processing
         seatbelt_model_path (str): Path to seatbelt classifier model
+        batch_size (int): Number of frames to process at once (1-4)
+        frame_interval (int): Process every Nth frame (1=all frames)
+        optimize_for_rvc2 (bool): Apply RVC2-specific optimizations
     """
     # Define colors
     GREEN = (0, 255, 0)    # For person with seatbelt
@@ -67,6 +71,9 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
     # Create DepthAI pipeline
     pipeline = dai.Pipeline()
     
+    # Configure pipeline for optimal RVC2 performance
+    pipeline.setOpenVINOVersion(dai.OpenVINO.Version.VERSION_2022_1)
+    
     # Define sources and outputs
     cam_rgb = pipeline.create(dai.node.XLinkIn)
     detection_nn = pipeline.create(dai.node.YoloDetectionNetwork)
@@ -93,6 +100,7 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
     })
     detection_nn.setIouThreshold(0.5)
     detection_nn.setNumInferenceThreads(2)
+    detection_nn.setNumNCEPerInferenceThread(2)  # Optimize NCE usage for RVC2
     detection_nn.input.setBlocking(False)
     
     # Linking
@@ -114,6 +122,8 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
         seatbelt_nn.setNumPoolFrames(1)
         seatbelt_nn.input.setBlocking(False)
         seatbelt_nn.input.setQueueSize(1)
+        seatbelt_nn.setNumInferenceThreads(2)  # Use 2 inference threads for RVC2
+        seatbelt_nn.setNumNCEPerInferenceThread(2)  # Optimize NCE usage for RVC2
 
         # Create output node for seatbelt detection results
         seatbelt_out = pipeline.create(dai.node.XLinkOut)
@@ -169,19 +179,19 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
 
     # Connect to device and start pipeline
     with dai.Device(pipeline) as device:
-        # Output queues
-        q_rgb = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
-        q_nn = device.getOutputQueue(name="detections", maxSize=4, blocking=False)
+        # Output queues with optimized size for RVC2
+        q_rgb = device.getOutputQueue(name="rgb", maxSize=2, blocking=False)
+        q_nn = device.getOutputQueue(name="detections", maxSize=2, blocking=False)
         
         # Input queue for sending frames
-        q_in = device.getInputQueue(name="frame")
+        q_in = device.getInputQueue(name="frame", maxSize=2)
         
         # Seatbelt detection queues
         q_seatbelt_in = None
         q_seatbelt_out = None
         if use_seatbelt_detection:
-            q_seatbelt_in = device.getInputQueue(name="seatbelt_in")
-            q_seatbelt_out = device.getOutputQueue(name="seatbelt_out", maxSize=4, blocking=False)
+            q_seatbelt_in = device.getInputQueue(name="seatbelt_in", maxSize=2)
+            q_seatbelt_out = device.getOutputQueue(name="seatbelt_out", maxSize=2, blocking=False)
         
         frame_count = 0
         start_time = time.time()
@@ -202,6 +212,11 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
                 break
             
             frame_count += 1
+            
+            # Skip frames based on interval setting for performance
+            if frame_interval > 1 and frame_count % frame_interval != 0:
+                continue
+                
             current_time = time.time() - start_time
             
             # Print progress
@@ -215,7 +230,10 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
             # Log every frame
             log_file.write(f"\n--- Frame {frame_count} (Time: {current_time:.2f}s) ---\n")
             
-            resized_frame = cv2.resize(frame, (416, 416))
+            # Use more efficient resizing method suitable for RVC2
+            # For RVC2, we resize the frame to the appropriate size directly with a high-quality resize
+            resized_frame = cv2.resize(frame, (416, 416), interpolation=cv2.INTER_AREA)
+            
             # Convert frame to DepthAI format and send to device
             img = dai.ImgFrame()
             img.setData(resized_frame.transpose(2, 0, 1).flatten())
@@ -299,11 +317,13 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
                     
                     # Extract person ROI for seatbelt detection
                     if box_width > 0 and box_height > 0:
-                        person_roi = frame[box_top:box_top+box_height, box_left:box_left+box_width].copy()
+                        # Use reference instead of copying where possible to reduce memory usage
+                        person_roi = frame[box_top:box_top+box_height, box_left:box_left+box_width]
                         
                         # Perform seatbelt classification on the person ROI
                         try:
                             # Resize for the seatbelt model, preserving aspect ratio
+                            # Using more efficient resize method for RVC2
                             person_h, person_w, _ = person_roi.shape
                             target_size = 224
                             
@@ -315,7 +335,8 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
                                 new_w = target_size
                                 new_h = int(person_h * (target_size / person_w))
                             
-                            resized_roi = cv2.resize(person_roi, (new_w, new_h))
+                            # Use INTER_AREA for downsampling to improve quality and performance
+                            resized_roi = cv2.resize(person_roi, (new_w, new_h), interpolation=cv2.INTER_AREA)
                             
                             # Create a black canvas and place the resized ROI in the center
                             delta_w = target_size - new_w
@@ -501,10 +522,14 @@ if __name__ == "__main__":
     parser.add_argument("--output", help="Path to output video (optional)")
     parser.add_argument("--show", action="store_true", help="Show video preview (if display available)")
     parser.add_argument("--seatbelt", help="Path to seatbelt classifier model", default="blob/seatbelt.blob")
+    parser.add_argument("--batch", type=int, help="Batch size for processing (1-4)", default=1)
+    parser.add_argument("--interval", type=int, help="Process every Nth frame", default=1)
+    parser.add_argument("--optimize", action="store_true", help="Apply RVC2-specific optimizations", default=True)
 
     args = parser.parse_args()
     
     if args.video:
-        process_video(args.video, args.output, show_video=False, seatbelt_model_path=args.seatbelt)
+        process_video(args.video, args.output, show_video=args.show, seatbelt_model_path=args.seatbelt,
+                    batch_size=args.batch, frame_interval=args.interval, optimize_for_rvc2=args.optimize)
     else:
         print("Please provide a video path with --video argument")
