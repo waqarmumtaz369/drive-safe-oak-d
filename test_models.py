@@ -7,7 +7,7 @@ import argparse
 import datetime
 
 def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_model_path="blob/seatbelt.blob", 
-               batch_size=1, frame_interval=1, optimize_for_rvc2=True):
+               batch_size=1, frame_interval=1, optimize_for_rvc2=True, inference_threads=1):
     """
     Process a video file to detect people and cell phones using DepthAI
     
@@ -19,6 +19,7 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
         batch_size (int): Number of frames to process at once (1-4)
         frame_interval (int): Process every Nth frame (1=all frames)
         optimize_for_rvc2 (bool): Apply RVC2-specific optimizations
+        inference_threads (int): Number of inference threads (1-2, must match pool frames)
     """
     # Define colors
     GREEN = (0, 255, 0)    # For person with seatbelt
@@ -99,8 +100,9 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
         "side13": np.array([6, 7, 8])
     })
     detection_nn.setIouThreshold(0.5)
-    detection_nn.setNumInferenceThreads(2)
+    detection_nn.setNumInferenceThreads(inference_threads)
     detection_nn.setNumNCEPerInferenceThread(2)  # Optimize NCE usage for RVC2
+    detection_nn.setNumPoolFrames(inference_threads)  # Must be at least equal to number of executors
     detection_nn.input.setBlocking(False)
     
     # Linking
@@ -119,10 +121,10 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
         seatbelt_nn.setBlobPath(seatbelt_model_path)
         
         # Add input configuration to specify expected format
-        seatbelt_nn.setNumPoolFrames(1)
+        seatbelt_nn.setNumPoolFrames(inference_threads)  # Must be at least equal to number of executors
         seatbelt_nn.input.setBlocking(False)
         seatbelt_nn.input.setQueueSize(1)
-        seatbelt_nn.setNumInferenceThreads(2)  # Use 2 inference threads for RVC2
+        seatbelt_nn.setNumInferenceThreads(inference_threads)  # Use inference threads for RVC2
         seatbelt_nn.setNumNCEPerInferenceThread(2)  # Optimize NCE usage for RVC2
 
         # Create output node for seatbelt detection results
@@ -525,11 +527,13 @@ if __name__ == "__main__":
     parser.add_argument("--batch", type=int, help="Batch size for processing (1-4)", default=1)
     parser.add_argument("--interval", type=int, help="Process every Nth frame", default=1)
     parser.add_argument("--optimize", action="store_true", help="Apply RVC2-specific optimizations", default=True)
+    parser.add_argument("--threads", type=int, help="Number of inference threads (1-2)", default=1)
 
     args = parser.parse_args()
     
     if args.video:
         process_video(args.video, args.output, show_video=args.show, seatbelt_model_path=args.seatbelt,
-                    batch_size=args.batch, frame_interval=args.interval, optimize_for_rvc2=args.optimize)
+                    batch_size=args.batch, frame_interval=args.interval, optimize_for_rvc2=args.optimize,
+                    inference_threads=args.threads)
     else:
         print("Please provide a video path with --video argument")
