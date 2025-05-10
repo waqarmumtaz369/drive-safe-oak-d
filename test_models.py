@@ -289,7 +289,7 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
                                 seatbelt_class = np.argmax(seatbelt_data)
                                 confidence = seatbelt_data[seatbelt_class]
                                 print(f"Seatbelt model class: {seatbelt_class}, confidence: {confidence:.3f}")
-                                if seatbelt_class == 1 and confidence < 0.999:
+                                if seatbelt_class == 1 and confidence < 1.0:
                                     seatbelt_status = "Not Worn"
                                 else:
                                     seatbelt_status = "Worn"
@@ -301,12 +301,12 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
                                 if seatbelt_status == "Not Worn":
                                     seatbelt_not_worn_count += 1
                                     seatbelt_worn_count = 0
-                                    if seatbelt_not_worn_count >= 5:
+                                    if seatbelt_not_worn_count >= 3:
                                         seatbelt_alert = True
                                 elif seatbelt_status == "Worn":
                                     seatbelt_worn_count += 1
                                     seatbelt_not_worn_count = 0
-                                    if seatbelt_worn_count >= 5:
+                                    if seatbelt_worn_count >= 3:
                                         seatbelt_alert = False
                         except Exception as e:
                             seatbelt_status = "Error"
