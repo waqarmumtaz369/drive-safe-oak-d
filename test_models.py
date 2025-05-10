@@ -167,12 +167,6 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
         frame_count = 0
         start_time = time.time()
         print(f"Processing video with {total_frames} frames...")
-        # Initialize summary statistics
-        total_person_detections = 0
-        total_phone_detections = 0
-        frames_with_detections = 0
-        frames_with_seatbelt = 0
-        frames_without_seatbelt = 0
         # Main loop: process each frame in the video
         while cap.isOpened():
             ret, frame = cap.read()
@@ -210,11 +204,6 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
             # Get detection results from device
             in_nn = q_nn.tryGet()
             
-            # Initialize detection counters for this frame
-            person_count = 0
-            phone_count = 0
-            seatbelt_status = "Not checked"
-            
             # Helper function to calculate bounding box area
             def get_bbox_area(detection):
                 width = detection.xmax - detection.xmin
@@ -223,9 +212,7 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
                 
             if in_nn is not None:
                 detections = in_nn.detections
-                if len(detections) > 0:
-                    frames_with_detections += 1
-                    
+                
                 # Separate detections by class
                 person_detections = []
                 phone_detections = []
@@ -236,12 +223,8 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
                     # Classify detection
                     if class_id == 0:  # person
                         person_detections.append(detection)
-                        person_count += 1
-                        total_person_detections += 1
                     elif class_id == 67:  # cell phone
                         phone_detections.append(detection)
-                        phone_count += 1
-                        total_phone_detections += 1
                 
                 # If person detected and seatbelt detection enabled, run seatbelt classifier on largest person
                 if person_detections and use_seatbelt_detection:
@@ -305,10 +288,6 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
                                     seatbelt_status = "Uncertain"
                                 else:
                                     seatbelt_status = seatbelt_labels[seatbelt_class]
-                                if seatbelt_class == 1:
-                                    frames_with_seatbelt += 1
-                                else:
-                                    frames_without_seatbelt += 1
                                 seatbelt_color = GREEN if seatbelt_class == 1 else RED
                                 cv2.putText(display_frame, f"Seatbelt {seatbelt_status}", 
                                           (box_left + 5, box_top + 50), 
@@ -368,15 +347,6 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
         processing_time = time.time() - start_time
         print(f"Processed {frame_count} frames in {processing_time:.2f} seconds")
         print(f"Average FPS: {frame_count/processing_time:.2f}")
-        
-        # Print summary to console
-        print("\nDetection Summary:")
-        print(f"  Frames with detections: {frames_with_detections}/{frame_count} ({100*frames_with_detections/frame_count:.1f}%)")
-        print(f"  Total person detections: {total_person_detections}")
-        print(f"  Total phone detections: {total_phone_detections}")
-        if use_seatbelt_detection:
-            print(f"  Frames with seatbelt: {frames_with_seatbelt}")
-            print(f"  Frames without seatbelt: {frames_without_seatbelt}")
 
 # Entry point for command-line usage
 if __name__ == "__main__":
