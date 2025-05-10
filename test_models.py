@@ -287,7 +287,7 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
                                 # Print seatbelt model score
                                 print(f"Seatbelt model class: {seatbelt_class}, confidence: {confidence:.3f}")
                                 # New logic: If confidence < 0.98, seatbelt is not worn, else worn
-                                if confidence < 0.98:
+                                if seatbelt_class == 1 and confidence < 0.998:
                                     seatbelt_status = "Not Worn"
                                 else:
                                     seatbelt_status = "Worn"
