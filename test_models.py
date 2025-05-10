@@ -217,6 +217,7 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
                 
                 # Separate detections by class
                 person_detections = []
+                phone_detections = []
                 
                 # Process each detection
                 for i, detection in enumerate(detections):
@@ -224,8 +225,10 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
                     # Classify detection
                     if class_id == 0:  # person
                         person_detections.append(detection)
+                    elif class_id == 67:  # cell phone
+                        phone_detections.append(detection)
                 
-                # If person detected, run seatbelt and phone detection on largest person
+                # Always perform both seatbelt and phone detection after a person is detected
                 if person_detections:
                     largest_person = max(person_detections, key=get_bbox_area)
                     x1 = largest_person.xmin * display_width
@@ -236,94 +239,87 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
                     box_top = int(y1)
                     box_width = int(x2 - x1)
                     box_height = int(y2 - y1)
-                    
+
                     # Ensure bounding box is within frame
                     box_left = max(0, box_left)
                     box_top = max(0, box_top)
                     box_width = min(display_width - box_left, box_width)
                     box_height = min(display_height - box_top, box_height)
-                    
-                    # Extract ROI for both seatbelt and phone detection
-                    if box_width > 0 and box_height > 0:
+
+                    # Seatbelt detection (if model available)
+                    if use_seatbelt_detection and box_width > 0 and box_height > 0:
                         person_roi = display_frame[box_top:box_top+box_height, box_left:box_left+box_width]
-                        
-                        # --- Seatbelt detection (if enabled) ---
-                        if use_seatbelt_detection:
-                            try:
-                                person_h, person_w, _ = person_roi.shape
-                                target_size = 224
-                                if person_h > person_w:
-                                    new_h = target_size
-                                    new_w = int(person_w * (target_size / person_h))
+                        try:
+                            # Resize ROI for seatbelt model, keep aspect ratio
+                            person_h, person_w, _ = person_roi.shape
+                            target_size = 224
+                            if person_h > person_w:
+                                new_h = target_size
+                                new_w = int(person_w * (target_size / person_h))
+                            else:
+                                new_w = target_size
+                                new_h = int(person_h * (target_size / person_w))
+                            resized_roi = cv2.resize(person_roi, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                            # Pad to 224x224
+                            delta_w = target_size - new_w
+                            delta_h = target_size - new_h
+                            top, bottom = delta_h // 2, delta_h - (delta_h // 2)
+                            left, right = delta_w // 2, delta_w - (delta_w // 2)
+                            seatbelt_input = cv2.copyMakeBorder(resized_roi, top, bottom, left, right, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+
+                            # Create ImgFrame for seatbelt classifier
+                            seatbelt_img = dai.ImgFrame()
+                            seatbelt_img.setData(seatbelt_input.transpose(2, 0, 1).flatten())
+                            seatbelt_img.setType(dai.RawImgFrame.Type.BGR888p)
+                            seatbelt_img.setWidth(224)
+                            seatbelt_img.setHeight(224)
+                            seatbelt_img.setTimestamp(time.monotonic())
+
+                            # Send to seatbelt classifier
+                            q_seatbelt_in.send(seatbelt_img)
+
+                            # Get seatbelt classification result
+                            seatbelt_result = q_seatbelt_out.tryGet()
+                            if seatbelt_result is not None:
+                                seatbelt_data = np.array(seatbelt_result.getFirstLayerFp16())
+                                seatbelt_class = np.argmax(seatbelt_data)
+                                confidence = seatbelt_data[seatbelt_class]
+                                print(f"Seatbelt model class: {seatbelt_class}, confidence: {confidence:.3f}")
+                                if seatbelt_class == 1 and confidence < 0.998:
+                                    seatbelt_status = "Not Worn"
                                 else:
-                                    new_w = target_size
-                                    new_h = int(person_h * (target_size / person_w))
-                                resized_roi = cv2.resize(person_roi, (new_w, new_h), interpolation=cv2.INTER_AREA)
-                                delta_w = target_size - new_w
-                                delta_h = target_size - new_h
-                                top, bottom = delta_h // 2, delta_h - (delta_h // 2)
-                                left, right = delta_w // 2, delta_w - (delta_w // 2)
-                                seatbelt_input = cv2.copyMakeBorder(resized_roi, top, bottom, left, right, cv2.BORDER_CONSTANT, value=[0, 0, 0])
-                                seatbelt_img = dai.ImgFrame()
-                                seatbelt_img.setData(seatbelt_input.transpose(2, 0, 1).flatten())
-                                seatbelt_img.setType(dai.RawImgFrame.Type.BGR888p)
-                                seatbelt_img.setWidth(224)
-                                seatbelt_img.setHeight(224)
-                                seatbelt_img.setTimestamp(time.monotonic())
-                                q_seatbelt_in.send(seatbelt_img)
-                                seatbelt_result = q_seatbelt_out.tryGet()
-                                if seatbelt_result is not None:
-                                    seatbelt_data = np.array(seatbelt_result.getFirstLayerFp16())
-                                    seatbelt_class = np.argmax(seatbelt_data)
-                                    confidence = seatbelt_data[seatbelt_class]
-                                    print(f"Seatbelt model class: {seatbelt_class}, confidence: {confidence:.3f}")
-                                    if confidence < 0.98:
-                                        seatbelt_status = "Not Worn"
-                                    else:
-                                        seatbelt_status = "Worn"
-                                    seatbelt_color = GREEN if seatbelt_status == "Worn" else RED
-                                    cv2.putText(display_frame, f"Seatbelt {seatbelt_status}", 
-                                              (box_left + 5, box_top + 50), 
-                                              cv2.FONT_HERSHEY_SIMPLEX, 0.85, seatbelt_color, 3)
-                            except Exception as e:
-                                seatbelt_status = "Error"
-                        
-                        # --- Phone detection on largest person ROI ---
-                        phone_input = cv2.resize(person_roi, (416, 416), interpolation=cv2.INTER_AREA)
-                        img = dai.ImgFrame()
-                        img.setData(phone_input.transpose(2, 0, 1).flatten())
-                        img.setType(dai.RawImgFrame.Type.BGR888p)
-                        img.setWidth(416)
-                        img.setHeight(416)
-                        img.setTimestamp(time.monotonic())
-                        q_in.send(img)
-                        in_nn = q_nn.tryGet()
-                        if in_nn is not None:
-                            detections = in_nn.detections
-                            phone_detections = [d for d in detections if d.label == 67]
-                            if phone_detections:
-                                largest_phone = max(phone_detections, key=get_bbox_area)
-                                x1 = largest_phone.xmin * box_width + box_left
-                                x2 = largest_phone.xmax * box_width + box_left
-                                y1 = largest_phone.ymin * box_height + box_top
-                                y2 = largest_phone.ymax * box_height + box_top
-                                box_left_p = int(x1)
-                                box_top_p = int(y1)
-                                box_width_p = int(x2 - x1)
-                                box_height_p = int(y2 - y1)
-                                cv2.rectangle(display_frame, (box_left_p, box_top_p), 
-                                              (box_left_p + box_width_p, box_top_p + box_height_p), YELLOW, 3)
-                                label = f"Phone Detected: {largest_phone.confidence:.2f}"
-                                cv2.putText(display_frame, label, (box_left_p, box_top_p - 10), 
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.85, YELLOW, 3)
-                    
+                                    seatbelt_status = "Worn"
+                                seatbelt_color = GREEN if seatbelt_status == "Worn" else RED
+                                cv2.putText(display_frame, f"Seatbelt {seatbelt_status}", 
+                                          (box_left + 5, box_top + 50), 
+                                          cv2.FONT_HERSHEY_SIMPLEX, 0.85, seatbelt_color, 3)
+                        except Exception as e:
+                            seatbelt_status = "Error"
+
                     # Draw bounding box for largest person
                     person_color = GREEN if seatbelt_status == "Worn" else RED
                     cv2.rectangle(display_frame, (box_left, box_top), 
-                                  (box_left + box_width, box_top + box_height), person_color, 3)
+                                (box_left + box_width, box_top + box_height), person_color, 3)
                     label = f"person: {largest_person.confidence:.2f}"
                     cv2.putText(display_frame, label, (box_left + 5, box_top + 25), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.85, person_color, 3)
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.85, person_color, 3)
+
+                    # Draw bounding box for largest phone (if any)
+                    if phone_detections:
+                        largest_phone = max(phone_detections, key=get_bbox_area)
+                        x1 = largest_phone.xmin * display_width
+                        x2 = largest_phone.xmax * display_width
+                        y1 = largest_phone.ymin * display_height
+                        y2 = largest_phone.ymax * display_height
+                        box_left_p = int(x1)
+                        box_top_p = int(y1)
+                        box_width_p = int(x2 - x1)
+                        box_height_p = int(y2 - y1)
+                        cv2.rectangle(display_frame, (box_left_p, box_top_p), 
+                                    (box_left_p + box_width_p, box_top_p + box_height_p), YELLOW, 3)
+                        label = f"Phone Detected: {largest_phone.confidence:.2f}"
+                        cv2.putText(display_frame, label, (box_left_p, box_top_p - 10), 
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.85, YELLOW, 3)
             
             # Display the resized frame
             if show_video:
