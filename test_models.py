@@ -11,11 +11,28 @@ import time            # Time utilities for measuring processing time
 import argparse        # For parsing command-line arguments
 import datetime        # For timestamping logs
 
-# Main function to process a video for person, phone, and seatbelt detection
-# This function sets up the pipeline, loads models, processes each frame, and logs results
+def resize_frame(frame, max_width=800):
+    """
+    Resize frame if width exceeds max_width while maintaining aspect ratio.
+    
+    Args:
+        frame (numpy.ndarray): Input frame
+        max_width (int): Maximum allowed width (default: 800)
+        
+    Returns:
+        numpy.ndarray: Resized frame (or original if no resizing needed)
+        float: Scaling factor (1.0 if no resizing)
+    """
+    height, width = frame.shape[:2]
+    if width > max_width:
+        scaling_factor = max_width / float(width)
+        new_height = int(height * scaling_factor)
+        resized_frame = cv2.resize(frame, (max_width, new_height), interpolation=cv2.INTER_AREA)
+        return resized_frame, scaling_factor
+    return frame, 1.0
 
 def process_video(video_path, output_path=None, show_video=True, seatbelt_model_path="blob/seatbelt.blob", 
-               batch_size=1, frame_interval=1, optimize_for_rvc2=True, inference_threads=1):
+               batch_size=1, frame_interval=1, optimize_for_rvc2=True, inference_threads=1, max_frame_width=800):
     """
     Process a video file to detect people and cell phones using DepthAI
     
@@ -28,6 +45,7 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
         frame_interval (int): Process every Nth frame (1=all frames)
         optimize_for_rvc2 (bool): Apply RVC2-specific optimizations
         inference_threads (int): Number of inference threads (1-2, must match pool frames)
+        max_frame_width (int): Maximum width for frame resizing (default: 800)
     """
     # Define colors for drawing bounding boxes and labels
     GREEN = (0, 255, 0)    # For person with seatbelt
@@ -125,8 +143,8 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
         return
     
     # Get video properties (width, height, fps, total frames)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    orig_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    orig_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
@@ -161,17 +179,25 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
             if not ret:
                 break
             frame_count += 1
+            
+            # Resize frame if needed (this will be used for both processing and display)
+            display_frame, scaling_factor = resize_frame(frame, max_frame_width)
+            display_height, display_width = display_frame.shape[:2]
+            
             # Skip frames for performance if frame_interval > 1
             if frame_interval > 1 and frame_count % frame_interval != 0:
                 continue
+                
             current_time = time.time() - start_time
             # Print FPS every 4 frames
             if frame_count % 4 == 0:
                 elapsed_time = time.time() - start_time
                 fps_processing = frame_count / elapsed_time
                 print(f"Processed {frame_count}/{total_frames} frames, FPS: {fps_processing:.2f}")
-            # Resize frame to 416x416 for YOLO model
-            resized_frame = cv2.resize(frame, (416, 416), interpolation=cv2.INTER_AREA)
+            
+            # Resize frame to 416x416 for YOLO model (this is separate from display resizing)
+            resized_frame = cv2.resize(display_frame, (416, 416), interpolation=cv2.INTER_AREA)
+            
             # Convert frame to DepthAI ImgFrame and send to device
             img = dai.ImgFrame()
             img.setData(resized_frame.transpose(2, 0, 1).flatten())
@@ -180,24 +206,30 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
             img.setHeight(resized_frame.shape[0])
             img.setTimestamp(time.monotonic())
             q_in.send(img)
+            
             # Get detection results from device
             in_nn = q_nn.tryGet()
+            
             # Initialize detection counters for this frame
             person_count = 0
             phone_count = 0
             seatbelt_status = "Not checked"
+            
             # Helper function to calculate bounding box area
             def get_bbox_area(detection):
                 width = detection.xmax - detection.xmin
                 height = detection.ymax - detection.ymin
                 return width * height
+                
             if in_nn is not None:
                 detections = in_nn.detections
                 if len(detections) > 0:
                     frames_with_detections += 1
+                    
                 # Separate detections by class
                 person_detections = []
                 phone_detections = []
+                
                 # Process each detection
                 for i, detection in enumerate(detections):
                     class_id = detection.label
@@ -210,25 +242,28 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
                         phone_detections.append(detection)
                         phone_count += 1
                         total_phone_detections += 1
+                
                 # If person detected and seatbelt detection enabled, run seatbelt classifier on largest person
                 if person_detections and use_seatbelt_detection:
                     largest_person = max(person_detections, key=get_bbox_area)
-                    x1 = largest_person.xmin * width
-                    x2 = largest_person.xmax * width
-                    y1 = largest_person.ymin * height
-                    y2 = largest_person.ymax * height
+                    x1 = largest_person.xmin * display_width
+                    x2 = largest_person.xmax * display_width
+                    y1 = largest_person.ymin * display_height
+                    y2 = largest_person.ymax * display_height
                     box_left = int(x1)
                     box_top = int(y1)
                     box_width = int(x2 - x1)
                     box_height = int(y2 - y1)
+                    
                     # Ensure bounding box is within frame
                     box_left = max(0, box_left)
                     box_top = max(0, box_top)
-                    box_width = min(width - box_left, box_width)
-                    box_height = min(height - box_top, box_height)
+                    box_width = min(display_width - box_left, box_width)
+                    box_height = min(display_height - box_top, box_height)
+                    
                     # Extract ROI for seatbelt detection
                     if box_width > 0 and box_height > 0:
-                        person_roi = frame[box_top:box_top+box_height, box_left:box_left+box_width]
+                        person_roi = display_frame[box_top:box_top+box_height, box_left:box_left+box_width]
                         try:
                             # Resize ROI for seatbelt model, keep aspect ratio
                             person_h, person_w, _ = person_roi.shape
@@ -240,67 +275,106 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
                                 new_w = target_size
                                 new_h = int(person_h * (target_size / person_w))
                             resized_roi = cv2.resize(person_roi, (new_w, new_h), interpolation=cv2.INTER_AREA)
-                           # (Continued from the last line of your script)
                             # Pad to 224x224
                             delta_w = target_size - new_w
                             delta_h = target_size - new_h
                             top, bottom = delta_h // 2, delta_h - (delta_h // 2)
                             left, right = delta_w // 2, delta_w - (delta_w // 2)
-                            padded_roi = cv2.copyMakeBorder(resized_roi, top, bottom, left, right,
-                                                           cv2.BORDER_CONSTANT, value=[0, 0, 0])
-                            # Prepare frame for DepthAI
-                            seatbelt_frame = dai.ImgFrame()
-                            seatbelt_frame.setData(padded_roi.transpose(2, 0, 1).flatten())
-                            seatbelt_frame.setType(dai.RawImgFrame.Type.BGR888p)
-                            seatbelt_frame.setWidth(target_size)
-                            seatbelt_frame.setHeight(target_size)
-                            seatbelt_frame.setTimestamp(time.monotonic())
-                            q_seatbelt_in.send(seatbelt_frame)
-                            nn_out = q_seatbelt_out.tryGet()
-                            if nn_out is not None:
-                                scores = np.array(nn_out.getFirstLayerFp16())
-                                seatbelt_class = int(np.argmax(scores))
-                                seatbelt_status = seatbelt_labels[seatbelt_class]
+                            seatbelt_input = cv2.copyMakeBorder(resized_roi, top, bottom, left, right, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+                            
+                            # Create ImgFrame for seatbelt classifier
+                            seatbelt_img = dai.ImgFrame()
+                            seatbelt_img.setData(seatbelt_input.transpose(2, 0, 1).flatten())
+                            seatbelt_img.setType(dai.RawImgFrame.Type.BGR888p)
+                            seatbelt_img.setWidth(224)
+                            seatbelt_img.setHeight(224)
+                            seatbelt_img.setTimestamp(time.monotonic())
+                            
+                            # Send to seatbelt classifier
+                            q_seatbelt_in.send(seatbelt_img)
+                            
+                            # Get seatbelt classification result
+                            seatbelt_result = q_seatbelt_out.tryGet()
+                            if seatbelt_result is not None:
+                                seatbelt_data = np.array(seatbelt_result.getFirstLayerFp16())
+                                seatbelt_class = np.argmax(seatbelt_data)
+                                confidence = seatbelt_data[seatbelt_class]
+                                if seatbelt_class == 0 and confidence < 0.8:
+                                    seatbelt_status = "Uncertain"
+                                else:
+                                    seatbelt_status = seatbelt_labels[seatbelt_class]
                                 if seatbelt_class == 1:
                                     frames_with_seatbelt += 1
                                 else:
                                     frames_without_seatbelt += 1
+                                seatbelt_color = GREEN if seatbelt_class == 1 else RED
+                                cv2.putText(display_frame, f"Seatbelt {seatbelt_status}", 
+                                          (box_left + 5, box_top + 50), 
+                                          cv2.FONT_HERSHEY_SIMPLEX, 0.85, seatbelt_color, 3)
                         except Exception as e:
-                            print("Seatbelt ROI processing error:", e)
-            # Draw detections
-            for detection in person_detections:
-                x1 = int(detection.xmin * width)
-                y1 = int(detection.ymin * height)
-                x2 = int(detection.xmax * width)
-                y2 = int(detection.ymax * height)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), GREEN if seatbelt_status == "Worn" else RED, 2)
-                cv2.putText(frame, f"Person ({seatbelt_status})", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX,
-                            0.5, WHITE, 1)
-            for detection in phone_detections:
-                x1 = int(detection.xmin * width)
-                y1 = int(detection.ymin * height)
-                x2 = int(detection.xmax * width)
-                y2 = int(detection.ymax * height)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), YELLOW, 2)
-                cv2.putText(frame, "Phone", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, WHITE, 1)
+                            seatbelt_status = "Error"
+                
+                # Draw bounding box for largest person
+                if person_detections:
+                    largest_person = max(person_detections, key=get_bbox_area)
+                    x1 = largest_person.xmin * display_width
+                    x2 = largest_person.xmax * display_width
+                    y1 = largest_person.ymin * display_height
+                    y2 = largest_person.ymax * display_height
+                    box_left = int(x1)
+                    box_top = int(y1)
+                    box_width = int(x2 - x1)
+                    box_height = int(y2 - y1)
+                    person_color = GREEN if seatbelt_status == "Worn" else RED
+                    cv2.rectangle(display_frame, (box_left, box_top), 
+                                (box_left + box_width, box_top + box_height), person_color, 3)
+                    label = f"person: {largest_person.confidence:.2f}"
+                    cv2.putText(display_frame, label, (box_left + 5, box_top + 25), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.85, person_color, 3)
+                
+                # Draw bounding box for largest phone
+                if phone_detections:
+                    largest_phone = max(phone_detections, key=get_bbox_area)
+                    x1 = largest_phone.xmin * display_width
+                    x2 = largest_phone.xmax * display_width
+                    y1 = largest_phone.ymin * display_height
+                    y2 = largest_phone.ymax * display_height
+                    box_left = int(x1)
+                    box_top = int(y1)
+                    box_width = int(x2 - x1)
+                    box_height = int(y2 - y1)
+                    cv2.rectangle(display_frame, (box_left, box_top), 
+                                (box_left + box_width, box_top + box_height), YELLOW, 3)
+                    label = f"Phone Detected: {largest_phone.confidence:.2f}"
+                    cv2.putText(display_frame, label, (box_left, box_top - 10), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.85, YELLOW, 3)
+            
+            # Display the resized frame
             if show_video:
-                cv2.imshow("Driver Distraction Detection", frame)
-                key = cv2.waitKey(1)
-                if key == ord('q'):
-                    break
-        # Clean up
+                try:
+                    cv2.imshow('Driver Monitoring', display_frame)
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
+                except cv2.error as e:
+                    if "Can't initialize GTK backend" in str(e):
+                        print("Warning: Display not available, disabling video preview")
+                        break
+        
+        # Clean up resources
         cap.release()
-        if show_video:
-            cv2.destroyAllWindows()
-        duration = time.time() - start_time
-        print("\nProcessing complete.")
-        print(f"Total frames processed: {frame_count}")
-        print(f"Person detections: {total_person_detections}")
-        print(f"Phone detections: {total_phone_detections}")
-        print(f"Frames with detections: {frames_with_detections}")
-        print(f"Seatbelt worn: {frames_with_seatbelt}, Not worn: {frames_without_seatbelt}")
-        print(f"Total processing time: {duration:.2f} seconds")
-
+        cv2.destroyAllWindows()
+        processing_time = time.time() - start_time
+        print(f"Processed {frame_count} frames in {processing_time:.2f} seconds")
+        print(f"Average FPS: {frame_count/processing_time:.2f}")
+        
+        # Print summary to console
+        print("\nDetection Summary:")
+        print(f"  Frames with detections: {frames_with_detections}/{frame_count} ({100*frames_with_detections/frame_count:.1f}%)")
+        print(f"  Total person detections: {total_person_detections}")
+        print(f"  Total phone detections: {total_phone_detections}")
+        if use_seatbelt_detection:
+            print(f"  Frames with seatbelt: {frames_with_seatbelt}")
+            print(f"  Frames without seatbelt: {frames_without_seatbelt}")
 
 # Entry point for command-line usage
 if __name__ == "__main__":
@@ -312,10 +386,12 @@ if __name__ == "__main__":
     parser.add_argument("--interval", type=int, help="Process every Nth frame", default=1)
     parser.add_argument("--optimize", action="store_true", help="Apply RVC2-specific optimizations", default=True)
     parser.add_argument("--threads", type=int, help="Number of inference threads (1-2)", default=1)
+    parser.add_argument("--max-width", type=int, help="Maximum frame width for display (default: 800)", default=800)
     args = parser.parse_args()
+    
     if args.video:
         process_video(args.video, show_video=args.show, seatbelt_model_path=args.seatbelt,
                     batch_size=args.batch, frame_interval=args.interval, optimize_for_rvc2=args.optimize,
-                    inference_threads=args.threads)
+                    inference_threads=args.threads, max_frame_width=args.max_width)
     else:
         print("Please provide a video path with --video argument")
