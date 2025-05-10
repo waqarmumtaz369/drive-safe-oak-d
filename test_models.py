@@ -173,6 +173,8 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
             if not ret:
                 break
             frame_count += 1
+            # Initialize seatbelt_status to avoid UnboundLocalError
+            seatbelt_status = "Not checked"
             
             # Resize frame if needed (this will be used for both processing and display)
             display_frame, scaling_factor = resize_frame(frame, max_frame_width)
