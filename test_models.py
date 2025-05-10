@@ -14,14 +14,14 @@ import datetime        # For timestamping logs
 # Main function to process a video for person, phone, and seatbelt detection
 # This function sets up the pipeline, loads models, processes each frame, and logs results
 
-def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_model_path="blob/seatbelt.blob", 
+def process_video(video_path, output_path=None, show_video=True, seatbelt_model_path="blob/seatbelt.blob", 
                batch_size=1, frame_interval=1, optimize_for_rvc2=True, inference_threads=1):
     """
     Process a video file to detect people and cell phones using DepthAI
     
     Args:
         video_path (str): Path to the video file
-        output_path (str): Path to save processed video (optional)
+        output_path (str): Path to save processed video (optional, removed)
         show_video (bool): Whether to display the video during processing
         seatbelt_model_path (str): Path to seatbelt classifier model
         batch_size (int): Number of frames to process at once (1-4)
@@ -38,12 +38,6 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
     # Ensure the models directory exists (required for seatbelt model)
     models_dir = os.path.dirname(os.path.abspath(seatbelt_model_path))
     os.makedirs(models_dir, exist_ok=True)
-    
-    # Ensure the output directory exists if output_path is provided
-    if output_path:
-        output_dir = os.path.dirname(output_path)
-        if output_dir and not os.path.exists(output_dir):
-            os.makedirs(output_dir, exist_ok=True)
     
     print("Loading detection models...")
     # Load YOLOv5/YOLOv8 model for person and cell phone detection
@@ -136,26 +130,8 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
-    # Set up video writer for output video if output_path is provided
-    writer = None
-    if output_path:
-        # Ensure output file has .mp4 extension
-        if not output_path.lower().endswith('.mp4'):
-            output_path = output_path + '.mp4'
-        # Use H.264 codec for MP4 format
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        # Ensure we have valid dimensions
-        writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-        # Check if writer initialized successfully, try alternative codec if not
-        if not writer.isOpened():
-            print(f"Error: Could not create output video at {output_path}")
-            print("Trying alternative codec...")
-            writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'avc1'), fps, (width, height))
-            if not writer.isOpened():
-                print("Failed to create video writer with alternative codec too.")
-                writer = None
-        else:
-            print(f"Writing output to {output_path}")
+    # Remove video writer logic, only show processed video
+    writer = None  # No video writer
 
     # Connect to DepthAI device and start the pipeline
     with dai.Device(pipeline) as device:
@@ -335,24 +311,18 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
                     label = f"Phone Detected: {largest_phone.confidence:.2f}"
                     cv2.putText(frame, label, (box_left, box_top - 10), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.85, YELLOW, 3)
-            # Write frame to output video if writer is enabled
-            if writer:
-                writer.write(frame)
-            # Optionally display the frame in a window
-            if show_video:
+            # Only display the frame in a window
+            if show_video or True:  # Always show video
                 try:
                     cv2.imshow('Driver Monitoring', frame)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
                 except cv2.error as e:
-                    if "Can't initialize GTK backend" in str(e) and show_video:
+                    if "Can't initialize GTK backend" in str(e):
                         print("Warning: Display not available, disabling video preview")
-                        show_video = False
+                        break
         # Clean up resources
         cap.release()
-        if writer:
-            print(f"Finalizing video output to {output_path}")
-            writer.release()
         cv2.destroyAllWindows()
         processing_time = time.time() - start_time
         print(f"Processed {frame_count} frames in {processing_time:.2f} seconds")
@@ -370,7 +340,6 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Driver Distraction Detection using DepthAI")
     parser.add_argument("--video", help="Path to video file")
-    parser.add_argument("--output", help="Path to output video (optional)")
     parser.add_argument("--show", action="store_true", help="Show video preview (if display available)")
     parser.add_argument("--seatbelt", help="Path to seatbelt classifier model", default="blob/seatbelt.blob")
     parser.add_argument("--batch", type=int, help="Batch size for processing (1-4)", default=1)
@@ -379,7 +348,7 @@ if __name__ == "__main__":
     parser.add_argument("--threads", type=int, help="Number of inference threads (1-2)", default=1)
     args = parser.parse_args()
     if args.video:
-        process_video(args.video, args.output, show_video=args.show, seatbelt_model_path=args.seatbelt,
+        process_video(args.video, show_video=args.show, seatbelt_model_path=args.seatbelt,
                     batch_size=args.batch, frame_interval=args.interval, optimize_for_rvc2=args.optimize,
                     inference_threads=args.threads)
     else:
