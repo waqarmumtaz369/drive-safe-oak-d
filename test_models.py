@@ -166,6 +166,10 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
             q_seatbelt_out = device.getOutputQueue(name="seatbelt_out", maxSize=2, blocking=False)
         frame_count = 0
         start_time = time.time()
+        # Add seatbelt status tracking variables
+        seatbelt_not_worn_count = 0
+        seatbelt_worn_count = 0
+        seatbelt_alert = False  # True if 5+ consecutive 'Not Worn' frames
         print(f"Processing video with {total_frames} frames...")
         # Main loop: process each frame in the video
         while cap.isOpened():
@@ -285,7 +289,7 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
                                 seatbelt_class = np.argmax(seatbelt_data)
                                 confidence = seatbelt_data[seatbelt_class]
                                 print(f"Seatbelt model class: {seatbelt_class}, confidence: {confidence:.3f}")
-                                if seatbelt_class == 1 and confidence < 0.998:
+                                if seatbelt_class == 1 and confidence < 0.995:
                                     seatbelt_status = "Not Worn"
                                 else:
                                     seatbelt_status = "Worn"
@@ -293,11 +297,22 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
                                 cv2.putText(display_frame, f"Seatbelt {seatbelt_status}", 
                                           (box_left + 5, box_top + 50), 
                                           cv2.FONT_HERSHEY_SIMPLEX, 0.85, seatbelt_color, 3)
+                                # Update seatbelt status counters and alert logic
+                                if seatbelt_status == "Not Worn":
+                                    seatbelt_not_worn_count += 1
+                                    seatbelt_worn_count = 0
+                                    if seatbelt_not_worn_count >= 5:
+                                        seatbelt_alert = True
+                                elif seatbelt_status == "Worn":
+                                    seatbelt_worn_count += 1
+                                    seatbelt_not_worn_count = 0
+                                    if seatbelt_worn_count >= 5:
+                                        seatbelt_alert = False
                         except Exception as e:
                             seatbelt_status = "Error"
 
                     # Draw bounding box for largest person
-                    person_color = GREEN if seatbelt_status == "Worn" else RED
+                    person_color = RED if seatbelt_alert else GREEN
                     cv2.rectangle(display_frame, (box_left, box_top), 
                                 (box_left + box_width, box_top + box_height), person_color, 3)
                     label = f"person: {largest_person.confidence:.2f}"
