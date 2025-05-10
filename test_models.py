@@ -165,13 +165,11 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
             if frame_interval > 1 and frame_count % frame_interval != 0:
                 continue
             current_time = time.time() - start_time
-            # Print progress every 10 frames
-            if frame_count % 10 == 0:
+            # Print FPS every 4 frames
+            if frame_count % 4 == 0:
                 elapsed_time = time.time() - start_time
                 fps_processing = frame_count / elapsed_time
-                remaining_frames = total_frames - frame_count
-                remaining_time = remaining_frames / fps_processing if fps_processing > 0 else 0
-                print(f"Processed {frame_count}/{total_frames} frames ({100*frame_count/total_frames:.1f}%) - ETA: {remaining_time:.1f}s, FPS: {fps_processing:.2f}")
+                print(f"Processed {frame_count}/{total_frames} frames, FPS: {fps_processing:.2f}")
             # Resize frame to 416x416 for YOLO model
             resized_frame = cv2.resize(frame, (416, 416), interpolation=cv2.INTER_AREA)
             # Convert frame to DepthAI ImgFrame and send to device
@@ -261,7 +259,6 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
                             seatbelt_result = q_seatbelt_out.tryGet()
                             if seatbelt_result is not None:
                                 seatbelt_data = np.array(seatbelt_result.getFirstLayerFp16())
-                                print(f"  Seatbelt classifier output: {seatbelt_data}")
                                 seatbelt_class = np.argmax(seatbelt_data)
                                 confidence = seatbelt_data[seatbelt_class]
                                 if seatbelt_class == 0 and confidence < 0.8:
