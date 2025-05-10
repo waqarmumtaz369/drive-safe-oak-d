@@ -67,16 +67,6 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
         1: "Worn"
     }
     
-    # Open a log file for detailed frame-by-frame analysis
-    log_file = open("detection_log.txt", "w")
-    log_file.write(f"Detection log started at {datetime.datetime.now()}\n")
-    log_file.write(f"Video: {video_path}\n")
-    log_file.write(f"Model: {model_path}\n")
-    if use_seatbelt_detection:
-        log_file.write(f"Seatbelt model: {seatbelt_model_path}\n")
-    log_file.write("\nFrame,Time,Detections,PersonCount,PhoneCount\n")
-    log_file.flush()
-
     # Create DepthAI pipeline
     pipeline = dai.Pipeline()
     
@@ -138,8 +128,6 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"Error: Could not open video {video_path}")
-        log_file.write(f"Error: Could not open video {video_path}\n")
-        log_file.close()
         return
     
     # Get video properties (width, height, fps, total frames)
@@ -147,9 +135,6 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-    log_file.write(f"Video properties: {width}x{height}, {fps} FPS, {total_frames} total frames\n\n")
-    log_file.flush()
     
     # Set up video writer for output video if output_path is provided
     writer = None
@@ -188,7 +173,6 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
         frame_count = 0
         start_time = time.time()
         print(f"Processing video with {total_frames} frames...")
-        log_file.write("Beginning frame processing\n")
         # Initialize summary statistics
         total_person_detections = 0
         total_phone_detections = 0
@@ -211,9 +195,7 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
                 fps_processing = frame_count / elapsed_time
                 remaining_frames = total_frames - frame_count
                 remaining_time = remaining_frames / fps_processing if fps_processing > 0 else 0
-                print(f"Processed {frame_count}/{total_frames} frames ({100*frame_count/total_frames:.1f}%) - ETA: {remaining_time:.1f}s")
-            # Log frame info
-            log_file.write(f"\n--- Frame {frame_count} (Time: {current_time:.2f}s) ---\n")
+                print(f"Processed {frame_count}/{total_frames} frames ({100*frame_count/total_frames:.1f}%) - ETA: {remaining_time:.1f}s, FPS: {fps_processing:.2f}")
             # Resize frame to 416x416 for YOLO model
             resized_frame = cv2.resize(frame, (416, 416), interpolation=cv2.INTER_AREA)
             # Convert frame to DepthAI ImgFrame and send to device
@@ -224,8 +206,6 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
             img.setHeight(resized_frame.shape[0])
             img.setTimestamp(time.monotonic())
             q_in.send(img)
-            # Log sent frame
-            log_file.write(f"Sent frame to device: size={resized_frame.shape}\n")
             # Get detection results from device
             in_nn = q_nn.tryGet()
             # Initialize detection counters for this frame
@@ -239,7 +219,6 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
                 return width * height
             if in_nn is not None:
                 detections = in_nn.detections
-                log_file.write(f"Received {len(detections)} detections\n")
                 if len(detections) > 0:
                     frames_with_detections += 1
                 # Separate detections by class
@@ -248,20 +227,15 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
                 # Process each detection
                 for i, detection in enumerate(detections):
                     class_id = detection.label
-                    # Log detection info
-                    log_file.write(f"  Detection #{i+1}: class_id={class_id}, confidence={detection.confidence:.4f}\n")
-                    log_file.write(f"    Bounding box: ({detection.xmin:.4f}, {detection.ymin:.4f}) to ({detection.xmax:.4f}, {detection.ymax:.4f})\n")
                     # Classify detection
                     if class_id == 0:  # person
                         person_detections.append(detection)
                         person_count += 1
                         total_person_detections += 1
-                        log_file.write(f"    Identified as PERSON\n")
                     elif class_id == 67:  # cell phone
                         phone_detections.append(detection)
                         phone_count += 1
                         total_phone_detections += 1
-                        log_file.write(f"    Identified as CELL PHONE\n")
                 # If person detected and seatbelt detection enabled, run seatbelt classifier on largest person
                 if person_detections and use_seatbelt_detection:
                     largest_person = max(person_detections, key=get_bbox_area)
@@ -311,7 +285,6 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
                             seatbelt_result = q_seatbelt_out.tryGet()
                             if seatbelt_result is not None:
                                 seatbelt_data = np.array(seatbelt_result.getFirstLayerFp16())
-                                log_file.write(f"  Seatbelt classifier output: {seatbelt_data}\n")
                                 print(f"  Seatbelt classifier output: {seatbelt_data}")
                                 seatbelt_class = np.argmax(seatbelt_data)
                                 confidence = seatbelt_data[seatbelt_class]
@@ -319,7 +292,6 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
                                     seatbelt_status = "Uncertain"
                                 else:
                                     seatbelt_status = seatbelt_labels[seatbelt_class]
-                                log_file.write(f"  Seatbelt classification: {seatbelt_status} (confidence: {confidence:.4f})\n")
                                 if seatbelt_class == 1:
                                     frames_with_seatbelt += 1
                                 else:
@@ -328,10 +300,7 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
                                 cv2.putText(frame, f"Seatbelt {seatbelt_status}", 
                                           (box_left + 5, box_top + 50), 
                                           cv2.FONT_HERSHEY_SIMPLEX, 0.85, seatbelt_color, 3)
-                            else:
-                                log_file.write("  No seatbelt classification result received\n")
                         except Exception as e:
-                            log_file.write(f"  Error in seatbelt detection: {str(e)}\n")
                             seatbelt_status = "Error"
                 # Draw bounding box for largest person
                 if person_detections:
@@ -350,7 +319,6 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
                     label = f"person: {largest_person.confidence:.2f}"
                     cv2.putText(frame, label, (box_left + 5, box_top + 25), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.85, person_color, 3)
-                    log_file.write(f"    Drawing largest PERSON detection (area: {get_bbox_area(largest_person):.4f})\n")
                 # Draw bounding box for largest phone
                 if phone_detections:
                     largest_phone = max(phone_detections, key=get_bbox_area)
@@ -367,12 +335,6 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
                     label = f"Phone Detected: {largest_phone.confidence:.2f}"
                     cv2.putText(frame, label, (box_left, box_top - 10), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.85, YELLOW, 3)
-                    log_file.write(f"    Drawing largest PHONE detection (area: {get_bbox_area(largest_phone):.4f})\n")
-            else:
-                log_file.write("No detections received\n")
-            # Write frame summary to log
-            log_file.write(f"Frame summary: {person_count} people, {phone_count} phones, seatbelt: {seatbelt_status}\n")
-            log_file.flush()
             # Write frame to output video if writer is enabled
             if writer:
                 writer.write(frame)
@@ -381,7 +343,6 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
                 try:
                     cv2.imshow('Driver Monitoring', frame)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
-                        log_file.write("Processing stopped by user\n")
                         break
                 except cv2.error as e:
                     if "Can't initialize GTK backend" in str(e) and show_video:
@@ -395,19 +356,7 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
         cv2.destroyAllWindows()
         processing_time = time.time() - start_time
         print(f"Processed {frame_count} frames in {processing_time:.2f} seconds")
-        # Write final summary to log
-        log_file.write("\n--- FINAL SUMMARY ---\n")
-        log_file.write(f"Total frames processed: {frame_count}\n")
-        log_file.write(f"Processing time: {processing_time:.2f} seconds\n")
-        log_file.write(f"Average FPS: {frame_count/processing_time:.2f}\n")
-        log_file.write(f"Frames with detections: {frames_with_detections} ({100*frames_with_detections/frame_count:.1f}%)\n")
-        log_file.write(f"Total person detections: {total_person_detections}\n")
-        log_file.write(f"Total phone detections: {total_phone_detections}\n")
-        log_file.write(f"Average persons per frame: {total_person_detections/frame_count:.2f}\n")
-        log_file.write(f"Average phones per frame: {total_phone_detections/frame_count:.2f}\n")
-        if use_seatbelt_detection:
-            log_file.write(f"Frames with seatbelt: {frames_with_seatbelt} ({100*frames_with_seatbelt/frame_count:.1f}%)\n")
-            log_file.write(f"Frames without seatbelt: {frames_without_seatbelt} ({100*frames_without_seatbelt/frame_count:.1f}%)\n")
+        print(f"Average FPS: {frame_count/processing_time:.2f}")
         # Print summary to console
         print("\nDetection Summary:")
         print(f"  Frames with detections: {frames_with_detections}/{frame_count} ({100*frames_with_detections/frame_count:.1f}%)")
@@ -416,9 +365,6 @@ def process_video(video_path, output_path="abc.mp4", show_video=False, seatbelt_
         if use_seatbelt_detection:
             print(f"  Frames with seatbelt: {frames_with_seatbelt}")
             print(f"  Frames without seatbelt: {frames_without_seatbelt}")
-        print(f"  Log file: detection_log.txt")
-        # Close log file
-        log_file.close()
 
 # Entry point for command-line usage
 if __name__ == "__main__":
