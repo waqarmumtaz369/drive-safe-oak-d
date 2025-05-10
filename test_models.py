@@ -286,14 +286,20 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
                                 confidence = seatbelt_data[seatbelt_class]
                                 # Print seatbelt model score
                                 print(f"Seatbelt model class: {seatbelt_class}, confidence: {confidence:.3f}")
-                                if seatbelt_class == 0 and confidence < 0.98:
-                                    seatbelt_status = "Uncertain"
+                                # New logic: If confidence < 0.98, seatbelt is not worn, else worn
+                                if confidence < 0.98:
+                                    seatbelt_status = "Not Worn"
                                 else:
-                                    seatbelt_status = seatbelt_labels[seatbelt_class]
-                                seatbelt_color = GREEN if seatbelt_class == 1 else RED
+                                    seatbelt_status = "Worn"
+                                seatbelt_color = GREEN if seatbelt_status == "Worn" else RED
                                 cv2.putText(display_frame, f"Seatbelt {seatbelt_status}", 
                                           (box_left + 5, box_top + 50), 
                                           cv2.FONT_HERSHEY_SIMPLEX, 0.85, seatbelt_color, 3)
+                                # Previous logic (commented out):
+                                # if seatbelt_class == 0 and confidence < 0.98:
+                                #     seatbelt_status = "Uncertain"
+                                # else:
+                                #     seatbelt_status = seatbelt_labels[seatbelt_class]
                         except Exception as e:
                             seatbelt_status = "Error"
                 
