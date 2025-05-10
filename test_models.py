@@ -301,7 +301,7 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
                                 confidence = seatbelt_data[seatbelt_class]
                                 # Print seatbelt model score
                                 print(f"Seatbelt model class: {seatbelt_class}, confidence: {confidence:.3f}")
-                                if seatbelt_class == 0 and confidence < 0.8:
+                                if seatbelt_class == 0 and confidence < 0.98:
                                     seatbelt_status = "Uncertain"
                                 else:
                                     seatbelt_status = seatbelt_labels[seatbelt_class]
