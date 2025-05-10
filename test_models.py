@@ -31,7 +31,7 @@ def resize_frame(frame, max_width=800):
         return resized_frame, scaling_factor
     return frame, 1.0
 
-def process_video(video_path, output_path=None, show_video=True, seatbelt_model_path="blob/seatbelt.blob", 
+def process_video(video_path, output_path=None, show_video=True, seatbelt_model_path="models/seatbelt.blob", 
                batch_size=1, frame_interval=1, optimize_for_rvc2=True, inference_threads=1, max_frame_width=800):
     """
     Process a video file to detect people and cell phones using DepthAI
@@ -59,7 +59,7 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
     
     print("Loading detection models...")
     # Load YOLOv5/YOLOv8 model for person and cell phone detection
-    model_path = 'blob/yolov8n_coco_416x416_openvino_2022.1_8shave.blob'
+    model_path = 'models/yolov8n_coco_416x416_openvino_2022.1_8shave.blob'
     classes = {
         0: "person",
         67: "cell phone"
@@ -359,7 +359,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Driver Distraction Detection using DepthAI")
     parser.add_argument("--video", help="Path to video file")
     parser.add_argument("--show", action="store_true", help="Show video preview (if display available)")
-    parser.add_argument("--seatbelt", help="Path to seatbelt classifier model", default="blob/seatbelt.blob")
+    parser.add_argument("--seatbelt", help="Path to seatbelt classifier model", default="models/seatbelt.blob")
     parser.add_argument("--batch", type=int, help="Batch size for processing (1-4)", default=1)
     parser.add_argument("--interval", type=int, help="Process every Nth frame", default=1)
     parser.add_argument("--optimize", action="store_true", help="Apply RVC2-specific optimizations", default=True)
