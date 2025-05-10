@@ -359,7 +359,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Driver Distraction Detection using DepthAI")
     parser.add_argument("--video", help="Path to video file")
     parser.add_argument("--show", action="store_true", help="Show video preview (if display available)")
-    parser.add_argument("--seatbelt", help="Path to seatbelt classifier model", default="models/seatbelt.blob")
+    parser.add_argument("--seatbelt", help="Path to seatbelt classifier model", default="models/seatbelt_nchw.blob")
     parser.add_argument("--batch", type=int, help="Batch size for processing (1-4)", default=1)
     parser.add_argument("--interval", type=int, help="Process every Nth frame", default=1)
     parser.add_argument("--optimize", action="store_true", help="Apply RVC2-specific optimizations", default=True)
