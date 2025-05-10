@@ -14,7 +14,7 @@ import datetime        # For timestamping logs
 # Main function to process a video for person, phone, and seatbelt detection
 # This function sets up the pipeline, loads models, processes each frame, and logs results
 
-def process_video(video_path, output_path=None, show_video=True, seatbelt_model_path="blob/seatbelt_nchw.blob", 
+def process_video(video_path, output_path=None, show_video=True, seatbelt_model_path="blob/seatbelt.blob", 
                batch_size=1, frame_interval=1, optimize_for_rvc2=True, inference_threads=1):
     """
     Process a video file to detect people and cell phones using DepthAI
