@@ -301,12 +301,12 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
                                 if seatbelt_status == "Not Worn":
                                     seatbelt_not_worn_count += 1
                                     seatbelt_worn_count = 0
-                                    if seatbelt_not_worn_count >= 7:
+                                    if seatbelt_not_worn_count >= 5:
                                         seatbelt_alert = True
                                 elif seatbelt_status == "Worn":
                                     seatbelt_worn_count += 1
                                     seatbelt_not_worn_count = 0
-                                    if seatbelt_worn_count >= 7:
+                                    if seatbelt_worn_count >= 5:
                                         seatbelt_alert = False
                         except Exception as e:
                             seatbelt_status = "Error"
