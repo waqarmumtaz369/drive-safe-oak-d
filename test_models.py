@@ -271,6 +271,12 @@ def process_video(video_path, output_path=None, show_video=True, seatbelt_model_
                             left, right = delta_w // 2, delta_w - (delta_w // 2)
                             seatbelt_input = cv2.copyMakeBorder(resized_roi, top, bottom, left, right, cv2.BORDER_CONSTANT, value=[0, 0, 0])
 
+                            # Add normalization step here
+                            seatbelt_input = seatbelt_input / 127.5 - 1
+
+                            # Create ImgFrame for seatbelt classifier
+                            seatbelt_img = dai.ImgFrame()
+                            
                             # Create ImgFrame for seatbelt classifier
                             seatbelt_img = dai.ImgFrame()
                             seatbelt_img.setData(seatbelt_input.transpose(2, 0, 1).flatten())
